@@ -1,0 +1,225 @@
+%md
+### Install Packages
+### NB:dbutils.library.restartPython() restarts the notebook's Python process. It may be needed after package changes so the environment reloads libraries. A restart clears variables from the current session, so run setup and data-loading cells again afterward.
+
+
+dbutils.library.restartPython()
+## %pip install openpyxl installs the openpyxl package, which pandas can use to read Excel .xlsx files. In Databricks, package-install commands may need to be run using the notebook's supported package-install syntax or environment controls.
+%pip install openpyxl
+%md
+### Import Libraries
+# `import pandas as pd` loads pandas for working with tabular data (DataFrames); `pd` is the conventional short name.
+
+import pandas as pd
+#  `importnumpy as np` loads NumPy for numerical operations; `np` is its conventional short name.
+import numpy as np
+%md
+### Data Ingestion
+#pd.read_excel(...) reads the Excel workbook at the specified workspace path into a pandas DataFrame named df. The path must point to a file that exists and is accessible from this notebook.
+df = pd.read_excel("/Workspace/Users/molatlhegipolitemasego@gmail.com/Vieweship Analysis/1779901851041_Viewership_Analysis_.xlsx")
+%md
+### EDA
+# display(df) renders the dataset as a table in Databricks. Scan the column names, sample values, and overall layout to understand what each row represents before cleaning or transforming the data.
+# Observation prompt: What does one row appear to represent, and which columns look useful for analysing viewership?
+display(df)
+# df.shape returns a tuple containing the number of rows and columns. It gives a quick baseline for the dataset's size before cleaning. / This tells us the number of rows and the number of columns
+df.shape
+#`df.columns` lists the column labels. Use it to confirm the exact spelling of fields before referring to them in code. / This is to print the column names in my data
+df.columns
+# df.dtypes shows the data type of each column, such as integer, decimal, text, or datetime. Types matter because they determine which operations can be performed reliably. 
+df.dtypes
+# df.info() summarises the DataFrame, including row count, column names, non-null counts, and data types. Compare non-null counts with the total number of rows to spot columns with missing values.
+df.info()
+# df.isnull() marks missing values as True; .sum() counts those missing values in each column. This helps identify where data cleaning may be needed.This code is to count the number of null values in each column
+df.isnull().sum()
+# df.duplicated() flags rows that repeat earlier rows, and .sum() counts the flagged rows. This checks for exact duplicate records, not necessarily repeated customers or repeated viewing events that may be valid.Identify duplicates: Use df.duplicated() to get a True/False value for each row
+print(df.duplicated().sum())
+
+%md
+#### Data cleaning
+#df.drop_duplicates() returns a DataFrame with duplicate rows removed. The result is assigned to df_cleaned, leaving the original df unchanged. This creates a separate cleaned version for later work. Drop (Delete) duplicated rows
+df_cleaned=df.drop_duplicates()
+# Running df_cleaned.duplicated().sum() again checks whether any exact duplicate rows remain after cleaning. A result of zero means no exact duplicate rows were detected by this check.
+print(df_cleaned.duplicated().sum())
+display(df_cleaned)
+# .unique() returns the distinct values found in the Platform column. It helps reveal the platform categories represented in the data and can expose inconsistent labels.
+print(df_cleaned["Platform"].unique())
+# This .unique() call lists the distinct values in PlayEventType, helping you understand which kinds of playback events appear in the dataset.
+print(df_cleaned["PlayEventType"].unique())
+#.nunique() counts distinct non-missing customer IDs. It answers how many unique customers are represented, rather than how many viewing-event rows exist.
+print(df_cleaned["CustomerID"].nunique())
+# df_cleaned.count() counts non-missing values in each column. Counts can differ between columns when some fields contain null values.
+df_cleaned.count()
+%md
+#### Data preparation
+
+# .drop(columns=['DateID']) removes DateID from df_cleaned. The date has already been converted into WatchDate, so the original encoded field may no longer be needed. The if condition checks that df_cleaned is not None before attempting the operation.
+if df_cleaned is not None:df_cleaned= df_cleaned.drop(columns=['DateID'])
+#Check the result
+#display(df_cleaned) shows the DataFrame after dropping DateID. Confirm that the new WatchDate column remains and that the removed column is no longer present.
+display (df_cleaned)
+%md
+### Feature Engineering
+# pd.to_datetime(df['DateID'], format='%Y%m%d') converts values formatted like YYYYMMDD into actual datetime values and stores them in a new WatchDate column. This makes it possible to extract calendar features such as day and month. df.head(3) previews the first three rows to check the conversion
+df['WatchDate'] = pd.to_datetime(df['DateID'], format='%Y%m%d')
+
+df.head(3)
+%md
+#### Feature engineering: extracting calendar features
+The `.dt` accessor extracts parts of the `WatchDate` datetime column:
+- `day_name()` creates the weekday name.
+- `month_name()` creates the month name.
+- `.dt.year` creates the year.
+- `.dt.day` creates the day number within the month.
+
+These derived columns make it easier to compare viewing patterns by day, month, or year. `head(3)` checks the newly created features on a small sample.
+
+# This line of code is to extract the MonthName from the WatchDate column
+df_cleaned ["MonthName"]=df_cleaned['WatchDate'].dt.month_name()
+
+# This line of code is to extract the year from the WatchDate column
+df_cleaned ['year']=df_cleaned['WatchDate'].dt.year
+
+# This line of code is to extract the day of month from the WatchDate column
+df_cleaned ['day']=df_cleaned['WatchDate'].dt.day
+
+#displayig the first 3 rows in order to check the changes made to the dataframe
+df_cleaned.head(3)
+%md
+#### Feature engineering: classifying weekdays and weekends
+The code first assigns every row the label `Weekday`, then uses `.loc[...]` to change Saturday and Sunday rows to `Weekend`. This creates a categorical feature for comparing viewing behaviour across these two day groups.
+
+
+
+df_cleaned['DayClassification'] = 'Weekday' # Set a default first
+df_cleaned.loc[df_cleaned['DayName'] =='Sunday', 'DayClassification'] = 'Weekend' 
+df_cleaned.loc[df_cleaned['DayName'] =='Saturday', 'DayClassification'] = 'Weekend'
+display(df_cleaned)
+
+%md
+#### Exploring the range of watch time
+`.min()` returns the smallest value in `TotalTimeWatched`; `.max()` returns the largest. These checks help understand the range and choose sensible categories for the next feature-engineering step.
+# Checking the min watch time
+print(df_cleaned["TotalTimeWatched"].min())
+
+# Checking the max watch time
+print(df_cleaned["TotalTimeWatched"].max())
+%md
+#### Feature engineering: creating watch-time buckets
+The code creates `watch_time_bck`, initially labels every row `Low`, then assigns `Med` to values from 1,000 to 4,000 inclusive and `High` to values above 4,000. This converts a numeric measure into categories that can be compared in grouped summaries.
+
+
+df_cleaned['watch_time_bck'] = 'Low'  # Default bucket
+df_cleaned.loc[df_cleaned['TotalTimeWatched'].between(1000, 4000),'watch_time_bck'] = 'Med'
+df_cleaned.loc[df_cleaned['TotalTimeWatched'] >  4000, 'watch_time_bck'] = 'High'
+display(df_cleaned)
+%md
+**Aggregation and groupby**
+- min()
+- max()
+- count()
+- sum()
+- mean() / average
+#groupby('Platform') splits rows by platform, and ['CustomerID'].nunique() counts distinct customers in each group. .reset_index() turns the grouped result back into a regular table. This compares the number of unique customers represented on each platform.
+
+#counting distict customer per category 
+#
+display(df.groupby('Platform')['CustomerID'].nunique().reset_index())
+
+df_cleaned.head(2)
+# `groupby(['DayName', 'watch_time_bck'])` forms groups for each combination of weekday and watch-time category. `.nunique()` counts distinct customers in each group, and `.reset_index()` makes the result easier to read as a table.
+
+# data_frame_name.groupby("categorical_column")["column_2b_agg"].agg_fun
+# display(df_cleaned.groupby("DayName")["CustomerID"].nunique().reset_index())
+display(df_cleaned.groupby(["DayName", "watch_time_bck"])["CustomerID"].nunique().reset_index())
+%md
+#### What this command does
+`df_cleaned.columns` lists the columns currently available after cleaning and feature engineering. It is useful for checking field names before building more complex groupings.
+df_cleaned.columns
+%md
+#### Multi-column aggregation
+This groups the data by weekday, month, platform, weekday/weekend classification, and watch-time bucket. It then counts distinct `CustomerID` values for each combination. `.reset_index()` converts the grouped output into a tabular DataFrame. The commented-out `.sort_values(...)` line would sort the result if uncommented.
+
+**Observation prompt:** Look for patterns across more than one dimension, but remember that many grouping columns can create a long, detailed output.
+display(
+    df_cleaned.groupby(["DayName","MonthName","Platform","DayClassification","watch_time_bck"])
+    ["CustomerID"].nunique()
+    .reset_index()
+    # .sort_values(by=["DayName"], ascending=True)
+)
+%md
+#### Summing watch time by group
+This uses the same group dimensions as the previous cell but sums `TotalTimeWatched` instead of counting unique customers. `.sort_values(by=['DayName'], ascending=True)` sorts the resulting rows alphabetically by weekday name, not in calendar weekday order.
+display(
+    df_cleaned.groupby(["DayName","MonthName","Platform","DayClassification","watch_time_bck"])
+    ["TotalTimeWatched"].sum()
+    .reset_index()
+    .sort_values(by=["DayName"], ascending=True)
+)
+#Inspecting the transformed dataset
+#display(df_cleaned) shows the full cleaned and feature-engineered DataFrame, including the added calendar and watch-time category columns. Use this to confirm that the derived features are present.
+display(df_cleaned)
+# Finding the top video/category combinations
+# The code groups records by VideoTitle and watch_time_bck, counts distinct customers, names that count unique_customers, sorts the groups from largest to smallest, and keeps the first 10 rows. This identifies the ten video/watch-time-category combinations with the highest unique-customer counts.
+
+# Interpretation note: A video can appear in more than one bucket, so each row represents a video-and-bucket combination, not necessarily a unique video overall.
+display(
+    df_cleaned
+    .groupby(["VideoTitle","watch_time_bck"])["CustomerID"].nunique()
+    .reset_index(name="unique_customers")
+    .sort_values(by="unique_customers", ascending=False)
+    .head(10)
+)
+%md
+**Joining Tables**
+# Creating a sample customer table
+# pd.DataFrame({...}) builds a small example table from Python lists. Each dictionary key becomes a column, and values in the lists become rows. CustomerID is the field shared with the orders table and will be used as the join key.
+customers = pd.DataFrame({
+    "CustomerID": [1, 2, 3, 4],
+    "CustomerName": ["Thabo", "Lerato", "Anele", "Rofhiwa"],
+    "City": ["Johannesburg", "Pretoria", "Durban", "Cape Town"]
+})
+
+display(customers)
+# Creating a sample orders table
+# This creates a second example DataFrame containing order IDs, customer IDs, products, and amounts. Some customer IDs may not appear in the customer table; that is intentional for demonstrating how different join types handle unmatched records.
+orders = pd.DataFrame({
+    "OrderID": [101, 102, 103, 104, 105],
+    "CustomerID": [1, 2, 2, 5, 3],
+    "Product": ["Laptop", "Mouse", "Keyboard", "Monitor", "Phone"],
+    "Amount": [12000, 250, 800, 3000, 7000]
+})
+
+display(orders)
+%md
+#### Inner join
+
+# Inner returns rows that are matching in both tables based on the collumns you are joining on
+# pd.merge(..., on='CustomerID', how='inner') combines the customer and order tables using CustomerID as the matching key. An inner join keeps only records with a matching key in both tables. A customer with no order and an order whose customer ID is missing from the customer table are excluded.
+inner_join = pd.merge(customers,orders,
+                      on="CustomerID",
+                      how="inner"
+)
+
+display(inner_join)
+%md
+#### Left join
+
+# With how='left', all rows from customers are retained, and matching order details are added where available. A customer with no matching order remains in the result, with missing values in the order columns. Customers with multiple orders can appear on multiple rows.
+
+
+left_join = pd.merge(customers,orders,
+                      on="CustomerID",
+                      how="left"
+)
+
+display(left_join)
+%md
+#### Outer join
+
+# With `how='outer'`, all keys from both tables are retained. Matching customer/order records are combined; unmatched customers or orders remain with missing values for the columns that have no match. This is useful when you need to see both matched and unmatched records.
+outer_join = pd.merge(customers,orders,
+                      on="CustomerID",
+                      how="outer"
+)
+display(outer_join)
